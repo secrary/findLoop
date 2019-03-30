@@ -3,16 +3,14 @@
 #include "dr_api.h"
 #include "drmgr.h"
 
-#include <string>
 #include <unordered_map>
+#include "idaScript.h"
 
 
 constexpr auto ITER_LIMIT = 200;
 
-/* Application module */
-static app_pc baseAddress;
-
 /* Base address */
+static app_pc baseAddress;
 
 /* Blocks */
 static std::unordered_map<DWORD_PTR, size_t> blocks;
@@ -63,90 +61,34 @@ dr_client_main(client_id_t id, int argc, const char* argv[])
 static void
 event_exit(void)
 {
-	std::string idaScript =
-		R"(
-# -------------------------------------------------------------------------------
-#
-# Copyright (c) 2019
-# Lasha Khasaia @_qaz_qaz
-#
-# -------------------------------------------------------------------------------
-
-from __future__ import print_function
-import ida_bytes
-import ida_funcs
-import idaapi
-import idc
-
-addresses = [
-)";
-
+	std::vector<DWORD_PTR> suspiciousBlocks;
 	for (const auto block : blocks)
 	{
-		if (block.second > ITER_LIMIT) // more than 20 iteration
+		if (block.second > ITER_LIMIT) // more than ITER_LIMIT iteration
 		{
 			// block.first: address
-			idaScript += std::to_string(block.first) + ", ";
+			suspiciousBlocks.emplace_back(block.first);
 		}
 	}
 
-	idaScript += "]\n";
+	if (!suspiciousBlocks.empty()) {
 
-	idaScript +=
-		R"(
-imageBase = idaapi.get_imagebase()
+		std::string idaScript = first;
 
-# return (start_ea, size)
-def getFuncRanges():
-    start = 0
-    next_func =  ida_funcs.get_next_func(start)
-    function_start_end = {}
-    while next_func:
-        function_start_end[next_func.start_ea] = next_func.end_ea
-        next_func = ida_funcs.get_next_func(next_func.start_ea)
-    return function_start_end
+		for (const auto& block : suspiciousBlocks)
+		{
+			idaScript += std::to_string(block) + ", ";
+		}
 
-# we looking for loops inside a function
-# blacklist function starts
-blacklisted_functions = [] # start, end
-functions_table = getFuncRanges()
-for rva in addresses:
-    address = rva + imageBase
-    if functions_table.has_key(address):
-        fnc = ida_funcs.get_func(address)
-        blacklisted_functions.append(fnc)
+		idaScript += "]\n";
 
-loop_addresses = []
-for rva in addresses:
-    address = rva + imageBase
-    flags = ida_bytes.get_flags(address)
-    if not ida_bytes.is_code(flags):
-        print("[findLoop] {}: not an instruction".format(hex(address)))
-        continue
-    
-    valid = True
-    for fnc in blacklisted_functions:
-        if ida_funcs.func_contains(fnc, address):
-            valid = False
-            break
-    if valid:
-        loop_addresses.append(address)
-    
-    
-loop_addresses = set(loop_addresses)
-print("[findLoop] Possible encryption/decryption or compression/decompression code:")
-for address in loop_addresses:
-    idc.set_color(address, CIC_ITEM, 0x36AD80) # set color: green
-    idc.add_bpt(address)
-    print("0x{:x}".format(address))
+		idaScript += second;
 
-print()
-)";
-
-	auto idaScriptName = target_name + "_findLoop.py";
-	auto fd = dr_open_file(idaScriptName.c_str(), DR_FILE_WRITE_OVERWRITE);
-	dr_write_file(fd, idaScript.c_str(), idaScript.size()); // write IDA Pro script
-	dr_close_file(fd);
+		auto idaScriptName = target_name + "_findLoop.py";
+		auto fd = dr_open_file(idaScriptName.c_str(), DR_FILE_WRITE_OVERWRITE);
+		dr_write_file(fd, idaScript.c_str(), idaScript.size()); // write IDA Pro script
+		dr_close_file(fd);
+	}
 
 	drmgr_exit();
 }
